@@ -2,7 +2,7 @@
 
 ## Introduction
 
-`pb-manager` is a command-line interface (CLI) tool designed to simplify the management of multiple PocketBase instances on a single Linux server. It automates setup, configuration, and ongoing maintenance tasks, including process management with PM2, reverse proxying with Nginx, SSL certificate handling with Certbot, and provides an interactive dashboard for instance monitoring.
+`pb-manager` is a command-line interface (CLI) tool designed to simplify the management of multiple PocketBase instances on a single Linux server. It automates setup, configuration, and ongoing maintenance tasks, including process management with PM2, reverse proxying with Nginx, SSL certificate handling with Certbot, and provides an interactive dashboard for instance monitoring. An optional API server (`pb-manager-api.js`) is also available for programmatic control.
 
 It supports Debian-based (like Ubuntu), RHEL-based (like Fedora, CentOS, Oracle Linux), and Arch-based Linux distributions by adapting Nginx configuration paths accordingly.
 
@@ -38,6 +38,7 @@ Running multiple web applications, like PocketBase instances, on one server can 
 - Provide **PocketBase version notification**: Notifies you (with a 24h cache) when a new PocketBase version is available, at the start of every command.
 - **Update itself**: Can fetch and install the latest version of `pb-manager` from GitHub.
 - Renew SSL certificates for all instances or specific ones using Certbot, with options to force renewal.
+- Offer an **optional API server** (`pb-manager-api.js`) for programmatic control over instances.
 
 ## How It Works
 
@@ -45,7 +46,7 @@ Running multiple web applications, like PocketBase instances, on one server can 
 
 1.  **PocketBase Executable:** Downloads a PocketBase executable (latest version by default, or a specified version) and stores it in a central location (`~/.pb-manager/bin/`). All managed instances use this single binary.
 2.  **Instance Configuration:** Details about each managed PocketBase instance (name, domain, port, data directory, HTTPS settings, HTTP/2, max body size) are stored in a JSON file (`~/.pb-manager/instances.json`).
-3.  **CLI Configuration:** Global settings for `pb-manager` itself, like default Certbot email, default PocketBase version for setup, and logging verbosity, are stored in `~/.pb-manager/cli-config.json`.
+3.  **CLI Configuration:** Global settings for `pb-manager` itself, like default Certbot email, default PocketBase version for setup, API settings (for internal communication), and logging verbosity, are stored in `~/.pb-manager/cli-config.json`.
 4.  **Version Cache:** The latest fetched PocketBase version from GitHub is cached for 24 hours in `~/.pb-manager/version-cache.json` to reduce API calls.
 5.  **Data Isolation:** Each instance is given its own data directory under `~/.pb-manager/instances_data/`, ensuring that databases and files are kept separate.
 6.  **PM2:** For each instance, `pb-manager` generates an entry in a PM2 ecosystem file (`~/.pb-manager/ecosystem.config.js`). PM2 is then used to run, monitor, and manage the lifecycle of these PocketBase processes.
@@ -60,6 +61,7 @@ Running multiple web applications, like PocketBase instances, on one server can 
 12. **DNS Validation:** When adding an instance with HTTPS, `pb-manager` checks that the domain resolves and points to your server's public IP before proceeding with Certbot.
 13. **PocketBase Version Notification:** At the start of every command, `pb-manager` checks (using the version cache) if a new PocketBase version is available and notifies you.
 14. **Distro Detection:** Automatically detects if the system is Debian-based, RHEL-based, or Arch-based to use appropriate Nginx paths and Certbot commands.
+15. **API Server (Optional):** The `pb-manager-api.js` script can be run to provide an HTTP API for programmatic management of instances. It interacts with `pb-manager.js` using a secure internal command.
 
 ## Prerequisites
 
@@ -77,25 +79,30 @@ Before using `pb-manager`, ensure the following are installed and configured on 
 7.  **`sudo` access:** All `pb-manager` commands require root privileges.
 8.  **Firewall:** Ports 80 (HTTP) and 443 (HTTPS) must be open. The automated installer attempts to configure `ufw` or `firewalld`.
 9.  **DNS Records:** For each domain/subdomain you intend to use, an A (and/or AAAA) record must point to your server's public IP address. This is crucial for Nginx and Certbot to function correctly. `pb-manager` will attempt to validate this.
+10. **For the API Server (`pb-manager-api.js`):** If you plan to use the API server, you'll need `express`, `body-parser`, and `dotenv` installed in the directory where `pb-manager-api.js` is located (typically `/opt/pb-manager/`). The automated installer will offer to set this up.
 
 ## Installation
 
 ### Automated Installation (Recommended)
 
-The provided shell script installs `pb-manager`, all its dependencies, and configures necessary services on supported Linux distributions.
+The provided shell script installs `pb-manager.js`, its core dependencies, configures necessary services, and **optionally sets up the `pb-manager-api.js` server** on supported Linux distributions.
 
 1.  Ensure `curl` and `git` are installed (the script will try to install them, but it's good to have them):
+    #### For Debian/Ubuntu
     ```bash
-    # For Debian/Ubuntu
     sudo apt update && sudo apt upgrade -y && sudo apt install -y curl git sudo
-    # For RHEL/Fedora
-    # sudo dnf install -y curl git sudo
-    # For Arch
-    # sudo pacman -Syu --noconfirm curl git sudo
+    ```
+    #### For RHEL/Fedora
+    ```bash
+    sudo dnf install -y curl git sudo
+    ```
+    #### For Arch
+    ```bash
+    sudo pacman -Syu --noconfirm curl git sudo
     ```
 2.  Run the installer:
     ```bash
-    curl -fsSL https://raw.githubusercontent.com/devAlphaSystem/Alpha-System-PBManager/main/install-pb-manager.sh | sudo bash
+    sudo curl -fsSL https://raw.githubusercontent.com/devAlphaSystem/Alpha-System-PBManager/main/install-pb-manager.sh -o /tmp/install-pb-manager.sh && sudo bash /tmp/install-pb-manager.sh && sudo rm /tmp/install-pb-manager.sh
     ```
 
 The installer will:
@@ -106,15 +113,16 @@ The installer will:
 - Configure PM2 to start on boot (using `systemd`).
 - **WSL2 Note:** If running on WSL2 without `systemd` enabled, the script will prompt to help configure it in `/etc/wsl.conf`. This requires a WSL shutdown and restart.
 - Download `pb-manager.js` to `/opt/pb-manager/`.
-- Install Node.js dependencies for `pb-manager` in `/opt/pb-manager/`.
+- Install Node.js dependencies for `pb-manager.js` (commander, inquirer, etc.) in `/opt/pb-manager/`.
 - Create a symlink `pb-manager` at `/usr/local/bin/pb-manager`.
 - Attempt to configure `ufw` or `firewalld` for Nginx traffic (HTTP/HTTPS).
 - Optionally run `pb-manager setup` to download PocketBase binaries.
+- **Optionally download `pb-manager-api.js` and install its dependencies (`express`, `body-parser`, `dotenv`) if you choose to set up the API server during the installation process.**
 
 ### Manual Installation
 
 1.  **Ensure all prerequisites listed above are installed manually.**
-2.  **Create a directory for the script:**
+2.  **Create a directory for the scripts:**
     ```bash
     sudo mkdir -p /opt/pb-manager
     cd /opt/pb-manager
@@ -123,7 +131,7 @@ The installer will:
     ```bash
     sudo curl -fsSL https://raw.githubusercontent.com/devAlphaSystem/Alpha-System-PBManager/main/pb-manager.js -o pb-manager.js
     ```
-4.  **Initialize npm and install dependencies:**
+4.  **Initialize npm and install core dependencies for `pb-manager.js`:**
     ```bash
     sudo npm init -y
     sudo npm install commander inquirer@8.2.4 fs-extra axios chalk@4.1.2 unzipper shelljs blessed blessed-contrib cli-table3 pretty-bytes@5.6.0
@@ -132,16 +140,32 @@ The installer will:
     ```bash
     sudo chmod +x pb-manager.js
     ```
-6.  **(Recommended) Create a symlink for global access:**
+6.  **(Recommended) Create a symlink for global access to `pb-manager` CLI:**
     ```bash
     sudo ln -sfn /opt/pb-manager/pb-manager.js /usr/local/bin/pb-manager
     ```
+7.  **(Optional) Setup for `pb-manager-api.js`:**
+    If you intend to use the API server:
+    
+    a.  **Download `pb-manager-api.js` to the same directory:**
+      ```bash
+      sudo curl -fsSL https://raw.githubusercontent.com/devAlphaSystem/Alpha-System-PBManager/main/pb-manager-api.js -o pb-manager-api.js
+      ```
+    b.  **Install API server dependencies (in `/opt/pb-manager/`):**
+      ```bash
+      sudo npm install express body-parser dotenv
+      ```
+    c.  Make it executable:
+      ```bash
+      sudo chmod +x pb-manager-api.js
+      ```
+    d.  Refer to the "API Server (`pb-manager-api.js`)" section for configuration and running.
 
 ## Configuration Directory
 
 `pb-manager` stores all its configuration files, the PocketBase binary, instance data, and logs within the `~/.pb-manager/` directory (relative to the home directory of the user running the script, typically `/root/.pb-manager` when using `sudo`).
 
-- `~/.pb-manager/cli-config.json`: Global settings for the `pb-manager` tool (default Certbot email, default PB version, logging preference).
+- `~/.pb-manager/cli-config.json`: Global settings for the `pb-manager` tool (default Certbot email, default PB version, API settings, logging preference).
 - `~/.pb-manager/instances.json`: Configuration for each managed PocketBase instance.
 - `~/.pb-manager/ecosystem.config.js`: PM2 ecosystem file.
 - `~/.pb-manager/bin/pocketbase`: The downloaded PocketBase executable.
@@ -149,13 +173,79 @@ The installer will:
 - `~/.pb-manager/audit.log`: Audit log of all `pb-manager` commands executed.
 - `~/.pb-manager/version-cache.json`: Caches the latest PocketBase version information for 24 hours.
 
+## API Server (`pb-manager-api.js`)
+
+For programmatic control over your PocketBase instances, `pb-manager` includes an optional API server script, `pb-manager-api.js`.
+
+### Features:
+
+-   Exposes key `pb-manager` functionalities via an HTTP API.
+-   Allows listing, adding, removing, starting, stopping, and restarting instances.
+-   Retrieves CLI configuration.
+
+### How it Works:
+
+-   It's an Express.js application.
+-   It executes `pb-manager.js` commands internally using the special `_internal-api-request` command.
+-   This internal communication relies on an API secret configured in `~/.pb-manager/cli-config.json` (set via `sudo pb-manager configure`). The API communication mode must also be enabled in the CLI config.
+
+### Security:
+
+-   **External API Token:** Client requests to `pb-manager-api.js` must include a Bearer token in the `Authorization` header. This token is configured via the `EXTERNAL_API_TOKEN` environment variable.
+-   **Internal CLI Secret:** Communication between `pb-manager-api.js` and `pb-manager.js` uses the internal API secret from `cli-config.json`.
+
+### Setup and Running:
+
+1.  **Ensure `pb-manager.js` and `pb-manager-api.js` are in the same directory** (e.g., `/opt/pb-manager/`). The automated installer can handle this if you opt-in for API server setup.
+2.  **Install dependencies for the API server** (if not done during manual or automated installation):
+    ```bash
+    cd /opt/pb-manager
+    sudo npm install express body-parser dotenv
+    ```
+3.  **Configure `pb-manager` CLI for API communication:**
+    Run `sudo pb-manager configure` and:
+    - Enable "API Communication".
+    - Ensure an "API Internal Secret" is set (it can be auto-generated).
+4.  **Set Environment Variables:**
+    Create a `.env` file in the same directory as `pb-manager-api.js` (e.g., `/opt/pb-manager/.env`) or set environment variables directly:
+    ```
+    API_PORT=3001
+    EXTERNAL_API_TOKEN="your_strong_client_facing_secret_token"
+    ```
+    - `API_PORT`: (Optional) Port for the API server to listen on (defaults to 3001).
+    - `EXTERNAL_API_TOKEN`: **Required.** A secret token that clients will use to authenticate with the API server.
+5.  **Run the API server:**
+    ```bash
+    cd /opt/pb-manager
+    sudo node pb-manager-api.js
+    ```
+    It's recommended to run this using a process manager like PM2 for production use:
+    ```bash
+    cd /opt/pb-manager
+    sudo pm2 start pb-manager-api.js --name pb-manager-api
+    sudo pm2 save
+    sudo pm2 startup
+    ```
+
+### Key API Endpoints (Base URL: `http://<server_ip>:<API_PORT>/api/v1`):
+
+-   `GET /instances`: Lists all managed instances.
+-   `POST /instances`: Adds a new instance (payload similar to `_internalAddInstance` parameters).
+-   `DELETE /instances/:name`: Removes an instance.
+-   `POST /instances/:name/start`: Starts an instance.
+-   `POST /instances/:name/stop`: Stops an instance.
+-   `POST /instances/:name/restart`: Restarts an instance.
+-   `GET /cli-config`: Retrieves the content of `cli-config.json`.
+
+All requests must include `Authorization: Bearer <EXTERNAL_API_TOKEN>` in the headers.
+
 ## Commands
 
 ```
   PocketBase Manager (pb-manager)
   A CLI tool to manage multiple PocketBase instances with Nginx, PM2, and Certbot.
 
-  Version: 0.3.1
+  Version: 0.4.0
 
   Usage:
     sudo pb-manager <command> [options]
@@ -177,7 +267,7 @@ The installer will:
 
   Setup & Configuration:
     setup [--version]               Initial setup: creates directories and downloads PocketBase
-    configure                       Set or view CLI configurations (default Certbot email, PB version, logging)
+    configure                       Set or view CLI configurations (default Certbot email, PB version, logging, API)
 
   Updates & Maintenance:
     renew-certificates [name|all]   Renew SSL certificates using Certbot (use --force to force renewal)
@@ -306,7 +396,7 @@ A notification about new PocketBase versions (if available) and audit logging oc
 
 **Purpose:** Set or view global CLI configurations.
 **Usage:** `sudo pb-manager configure`
-**Details:** Interactive command for Default Certbot Email, Default PocketBase Version for new setups, and complete logging preference.
+**Details:** Interactive command for Default Certbot Email, Default PocketBase Version for new setups, complete logging preference, and API communication settings (enable/disable, internal secret).
 
 ### Updates & Maintenance
 
@@ -415,6 +505,7 @@ While `pb-manager` aims to automate and simplify, be aware of:
 - **Script Bugs:** The tool may have bugs. Test in non-critical environments first.
 - **Network Connectivity:** Required for downloads and API interactions.
 - **Resource Limits:** Monitor server resources if running many instances.
+- **API Server Security:** If using `pb-manager-api.js`, ensure it's properly secured, especially if exposed to the internet. Protect your `EXTERNAL_API_TOKEN`.
 
 **Disclaimer:** This tool is provided as-is, without warranty. The user assumes all responsibility. **Always back up critical data.**
 
@@ -422,7 +513,7 @@ While `pb-manager` aims to automate and simplify, be aware of:
 
 ### Sudo Usage
 
-**All `pb-manager` commands must be run as root or with `sudo`.** This is essential for managing system services (Nginx, PM2), files in protected locations, and network configurations.
+**All `pb-manager` CLI commands must be run as root or with `sudo`.** This is essential for managing system services (Nginx, PM2), files in protected locations, and network configurations. The `pb-manager-api.js` script also executes `pb-manager.js` with `sudo`.
 
 ### DNS Configuration
 
@@ -438,3 +529,7 @@ Correct DNS A (and/or AAAA) records pointing to your server's IP are **critical*
 - Keep your server and all software (OS, Nginx, PM2, Node.js, PocketBase) updated.
 - Review Nginx configurations for any site-specific hardening needed beyond the defaults provided.
 - Regularly review the audit log (`pb-manager audit`).
+- **API Server:** If using `pb-manager-api.js`:
+    - Use a strong, unique `EXTERNAL_API_TOKEN`.
+    - Restrict network access to the API server port (`API_PORT`) as much as possible (e.g., firewall rules, run on localhost if only accessed locally).
+    - Ensure the user running `pb-manager-api.js` has appropriate, but minimal necessary, sudo privileges for `pb-manager.js` execution.
