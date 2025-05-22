@@ -366,6 +366,60 @@ app.post("/api/v1/pocketbase/update-executable", async (req, res) => {
   }
 });
 
+app.post("/api/v1/system/update-ecosystem", async (req, res) => {
+  const result = executePbManagerCommand("updateEcosystemAndReloadPm2", true, true);
+  if (result.success) {
+    res.json(result);
+  } else {
+    res.status(500).json({
+      error: result.error || "Failed to update ecosystem and reload PM2",
+      details: result.details || result.stderr,
+      messages: result.messages,
+    });
+  }
+});
+
+app.post("/api/v1/cli-config/default-certbot-email", async (req, res) => {
+  const { email } = req.body;
+  if (email !== null && typeof email !== "string") {
+    return res.status(400).json({ error: "Invalid payload: 'email' must be a string or null." });
+  }
+  const result = executePbManagerCommand("setDefaultCertbotEmail", true, true, { email });
+  if (result.success) {
+    res.json(result);
+  } else {
+    res.status(500).json({
+      error: result.error || "Failed to set default Certbot email",
+      details: result.details || result.stderr,
+      messages: result.messages,
+    });
+  }
+});
+
+app.get("/api/v1/system/status", (req, res) => {
+  try {
+    const cpus = os.cpus();
+    const cpuInfo = cpus.map((cpu) => ({ model: cpu.model, speed: cpu.speed }));
+    const status = {
+      hostname: os.hostname(),
+      platform: os.platform(),
+      release: os.release(),
+      uptime: os.uptime(),
+      arch: os.arch(),
+      cpuCount: cpus.length,
+      cpuInfo: cpuInfo.length > 0 ? cpuInfo[0] : { model: "N/A", speed: 0 },
+      totalMemory: os.totalmem(),
+      freeMemory: os.freemem(),
+      loadAverage: os.loadavg(),
+      timestamp: new Date().toISOString(),
+    };
+    res.json({ success: true, data: status });
+  } catch (error) {
+    console.error(chalk.red(`API GET /system/status error: ${error.message}`));
+    res.status(500).json({ success: false, error: "Failed to retrieve system status", details: error.message });
+  }
+});
+
 app.use((err, req, res, next) => {
   console.error(chalk.red(`API Unhandled Error: ${err.stack || err.message}`));
   res.status(500).json({ error: "Internal Server Error" });

@@ -1737,6 +1737,37 @@ async function _internalUpdatePocketBaseExecutable() {
   return results;
 }
 
+async function _internalUpdateEcosystemAndReloadPm2() {
+  try {
+    await updatePm2EcosystemFile();
+    const reloadResult = await reloadPm2();
+    if (!reloadResult.success) {
+      return { success: false, error: "Failed to reload PM2 after ecosystem update.", messages: ["PM2 ecosystem file updated, but PM2 reload failed.", reloadResult.message] };
+    }
+    return { success: true, messages: ["PM2 ecosystem file updated and PM2 reloaded successfully."] };
+  } catch (error) {
+    return { success: false, error: error.message, messages: [`Error updating ecosystem/reloading PM2: ${error.message}`] };
+  }
+}
+
+async function _internalSetDefaultCertbotEmail(payload) {
+  const { email } = payload;
+  if (email !== null && typeof email !== "string" && email !== "") {
+    return { success: false, error: "Invalid payload: 'email' must be a valid email string, empty string, or null.", messages: ["Invalid payload for setting Certbot email."] };
+  }
+  if (typeof email === "string" && email !== "" && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return { success: false, error: "Invalid payload: 'email' must be a valid email format.", messages: ["Invalid email format for Certbot email."] };
+  }
+  try {
+    const cliConfig = await getCliConfig();
+    cliConfig.defaultCertbotEmail = email || null;
+    await saveCliConfig(cliConfig);
+    return { success: true, messages: [`Default Certbot email set to ${cliConfig.defaultCertbotEmail || "not set"}.`] };
+  } catch (error) {
+    return { success: false, error: error.message, messages: [`Error setting default Certbot email: ${error.message}`] };
+  }
+}
+
 program
   .command("dashboard")
   .description("Show interactive dashboard for all PocketBase instances")
@@ -3286,6 +3317,14 @@ program
           result = await _internalUpdatePocketBaseExecutable();
           console.log(JSON.stringify(result));
           break;
+        case "updateEcosystemAndReloadPm2":
+          result = await _internalUpdateEcosystemAndReloadPm2();
+          console.log(JSON.stringify(result));
+          break;
+        case "setDefaultCertbotEmail":
+          result = await _internalSetDefaultCertbotEmail(payload);
+          console.log(JSON.stringify(result));
+          break;
         default:
           console.error(JSON.stringify({ success: false, error: `Unknown internal action: ${options.action}` }));
           process.exit(1);
@@ -3327,7 +3366,7 @@ program.helpInformation = () => `
   PocketBase Manager (pb-manager)
   A CLI tool to manage multiple PocketBase instances with Nginx, PM2, and Certbot.
 
-  Version: 0.4.0 rc2
+  Version: 0.4.0 rc3
 
   Usage:
     sudo pb-manager <command> [options]
