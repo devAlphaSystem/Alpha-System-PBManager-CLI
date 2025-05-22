@@ -19,6 +19,8 @@ let NGINX_SITES_AVAILABLE = "/etc/nginx/sites-available";
 let NGINX_SITES_ENABLED = "/etc/nginx/sites-enabled";
 let NGINX_DISTRO_MODE = "debian";
 
+const pbManagerVersion = "0.4.0";
+
 function detectDistro() {
   if (shell.which("apt-get")) {
     NGINX_SITES_AVAILABLE = "/etc/nginx/sites-available";
@@ -1045,19 +1047,6 @@ async function showDashboard() {
 async function _internalGetGlobalStats() {
   try {
     const cliConfig = await getCliConfig();
-    let pbManagerVersion = "N/A";
-
-    try {
-      const selfPackageJsonPath = path.join(path.dirname(process.argv[1]), "package.json");
-      if (await fs.pathExists(selfPackageJsonPath)) {
-        const pkg = await fs.readJson(selfPackageJsonPath);
-        pbManagerVersion = pkg.version || "N/A";
-      }
-    } catch (e) {
-      if (completeLogging) {
-        console.warn(chalk.yellow(`Could not read self package.json for version: ${e.message}`));
-      }
-    }
 
     return {
       success: true,
@@ -3251,14 +3240,20 @@ program
   .requiredOption("--action <action>", "Action to perform (e.g., listInstances, addInstance)")
   .option("--payload <json_payload>", "Base64 encoded JSON payload for the action")
   .action(async (options) => {
-    const cliConfig = await getCliConfig();
-    if (!cliConfig.api.enabled) {
-      console.error(JSON.stringify({ success: false, error: "API communication is not enabled in pb-manager config." }));
-      process.exit(1);
+    let cliConfigForInternalHandling;
+
+    try {
+      cliConfigForInternalHandling = await getCliConfig();
+      completeLogging = cliConfigForInternalHandling.completeLogging || false;
+    } catch (configError) {
+      console.error(JSON.stringify({ success: false, error: "PBManagerInternal: Failed to load CLI config during internal API request execution. Proceeding with caution.", details: configError.message }));
+
+      completeLogging = false;
+      cliConfigForInternalHandling = { api: { secret: options.secret, enabled: true }, completeLogging: false, defaultPocketBaseVersion: FALLBACK_POCKETBASE_VERSION };
     }
 
-    if (options.secret !== cliConfig.api.secret) {
-      console.error(JSON.stringify({ success: false, error: "Invalid internal API secret." }));
+    if (!options.secret) {
+      console.error(JSON.stringify({ success: false, error: "PBManagerInternal: Internal API secret is required for _internal-api-request." }));
       process.exit(1);
     }
 
@@ -3267,7 +3262,7 @@ program
       try {
         payload = JSON.parse(Buffer.from(options.payload, "base64").toString("utf-8"));
       } catch (e) {
-        console.error(JSON.stringify({ success: false, error: "Invalid JSON payload.", details: e.message }));
+        console.error(JSON.stringify({ success: false, error: "PBManagerInternal: Invalid JSON payload.", details: e.message }));
         process.exit(1);
       }
     }
@@ -3326,11 +3321,11 @@ program
           console.log(JSON.stringify(result));
           break;
         default:
-          console.error(JSON.stringify({ success: false, error: `Unknown internal action: ${options.action}` }));
+          console.error(JSON.stringify({ success: false, error: `PBManagerInternal: Unknown internal action: ${options.action}` }));
           process.exit(1);
       }
     } catch (error) {
-      console.error(JSON.stringify({ success: false, error: `Error executing internal action ${options.action}: ${error.message}`, stack: completeLogging ? error.stack : undefined }));
+      console.error(JSON.stringify({ success: false, error: `PBManagerInternal: Error executing internal action ${options.action}: ${error.message}`, stack: completeLogging ? error.stack : undefined }));
       process.exit(1);
     }
   });
@@ -3366,39 +3361,39 @@ program.helpInformation = () => `
   PocketBase Manager (pb-manager)
   A CLI tool to manage multiple PocketBase instances with Nginx, PM2, and Certbot.
 
-  Version: 0.4.0 rc3
+  Version: ${pbManagerVersion}
 
   Usage:
     sudo pb-manager <command> [options]
 
   Main Commands:
-    dashboard                       Show interactive dashboard for all PocketBase instances
-    add | create                    Register a new PocketBase instance
-    clone <sourceName> <newName>    Clone an existing instance's data and config to a new one
-    list [--json]                   List all managed PocketBase instances
-    remove <name>                   Remove a PocketBase instance (prompts for data deletion)
-    reset <name>                    Reset a PocketBase instance (delete all data, re-confirm needed)
-    reset-admin <name>              Reset the admin password for a PocketBase instance
+    dashboard                          Show interactive dashboard for all PocketBase instances
+    add | create                       Register a new PocketBase instance
+    clone <sourceName> <newName>       Clone an existing instance's data and config to a new one
+    list [--json]                      List all managed PocketBase instances
+    remove <name>                      Remove a PocketBase instance (prompts for data deletion)
+    reset <name>                       Reset a PocketBase instance (delete all data, re-confirm needed)
+    reset-admin <name>                 Reset the admin password for a PocketBase instance
 
   Instance Management:
-    start <name | all>              Start a specific PocketBase instance via PM2
-    stop <name | all>               Stop a specific PocketBase instance via PM2
-    restart <name | all>            Restart a specific PocketBase instance via PM2
-    logs <name>                     Show logs for a specific PocketBase instance from PM2
+    start <name | all>                 Start a specific PocketBase instance via PM2
+    stop <name | all>                  Stop a specific PocketBase instance via PM2
+    restart <name | all>               Restart a specific PocketBase instance via PM2
+    logs <name>                        Show logs for a specific PocketBase instance from PM2
 
   Setup & Configuration:
-    setup [--version]               Initial setup: creates directories and downloads PocketBase
-    configure                       Set or view CLI configurations (default Certbot email, PB version, logging, API)
+    setup [--version]                  Initial setup: creates directories and downloads PocketBase
+    configure                          Set or view CLI configurations (default Certbot email, PB version, logging, API)
 
   Updates & Maintenance:
-    renew-certificates [name|all]   Renew SSL certificates using Certbot (use --force to force renewal)
-    update-pocketbase               Update the PocketBase executable and restart all instances
-    update-ecosystem                Regenerate the PM2 ecosystem file and reload PM2
-    update-pb-manager               Update the pb-manager CLI from GitHub
+    renew-certificates <name | all>   Renew SSL certificates using Certbot (use --force to force renewal)
+    update-pocketbase                  Update the PocketBase executable and restart all instances
+    update-ecosystem                   Regenerate the PM2 ecosystem file and reload PM2
+    update-pb-manager                  Update the pb-manager CLI from GitHub
 
   Other:
-    audit                           Show the history of commands executed by this CLI (includes errors)
-    help [command]                  Show help for a specific command
+    audit                              Show the history of commands executed by this CLI (includes errors)
+    help [command]                     Show help for a specific command
 
   Run all commands as root or with sudo.
   

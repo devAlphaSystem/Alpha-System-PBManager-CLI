@@ -68,6 +68,7 @@ app.use((req, res, next) => {
 function executePbManagerCommand(commandArgs, isJsonOutput = false, useInternal = false, payload = null) {
   let fullCommand;
   let jsonOutput = isJsonOutput;
+  const actionForLog = useInternal ? commandArgs : commandArgs.split(" ")[0];
 
   if (useInternal && pbManagerCliApiEnabled && pbManagerCliApiSecret) {
     const payloadString = payload ? Buffer.from(JSON.stringify(payload)).toString("base64") : "";
@@ -77,11 +78,11 @@ function executePbManagerCommand(commandArgs, isJsonOutput = false, useInternal 
     fullCommand = `sudo node ${PB_MANAGER_SCRIPT_PATH} ${commandArgs}`;
   }
 
-  console.log(chalk.blue(`API executing: ${fullCommand.replace(pbManagerCliApiSecret || "DUMMY_SECRET_FOR_LOGGING", "********")}`));
+  console.log(chalk.blue(`API executing (Action: ${actionForLog}): ${fullCommand.replace(pbManagerCliApiSecret || "DUMMY_SECRET_FOR_LOGGING", "********")}`));
   const result = shell.exec(fullCommand, { silent: true });
 
   if (result.code !== 0) {
-    console.error(chalk.red(`API command failed: ${fullCommand.replace(pbManagerCliApiSecret || "DUMMY_SECRET_FOR_LOGGING", "********")}\nStderr: ${result.stderr}`));
+    console.error(chalk.red(`API command failed (Action: ${actionForLog}). Code: ${result.code}. Command: ${fullCommand.replace(pbManagerCliApiSecret || "DUMMY_SECRET_FOR_LOGGING", "********")}\nStderr: ${result.stderr}\nStdout: ${result.stdout}`));
     return {
       success: false,
       error: `Command failed with code ${result.code}`,
@@ -95,11 +96,12 @@ function executePbManagerCommand(commandArgs, isJsonOutput = false, useInternal 
       const parsed = JSON.parse(result.stdout);
 
       if (parsed.success === false) {
-        console.error(chalk.yellow(`Internal pb-manager command reported failure: ${parsed.error || JSON.stringify(parsed)}`));
+        console.error(chalk.yellow(`Internal pb-manager command reported failure. Action: ${actionForLog}. Error: ${parsed.error || JSON.stringify(parsed)}. Full stdout: ${result.stdout}`));
         return {
           success: false,
           error: parsed.error || "Internal command failed",
           details: parsed.messages || parsed,
+          rawStdout: result.stdout,
         };
       }
       return {
@@ -108,11 +110,12 @@ function executePbManagerCommand(commandArgs, isJsonOutput = false, useInternal 
         messages: parsed.messages,
       };
     } catch (e) {
-      console.error(chalk.red(`API command JSON parse error: ${e.message}\nStdout: ${result.stdout}`));
+      console.error(chalk.red(`API command JSON parse error. Action: ${actionForLog}. Error: ${e.message}\nRaw Stdout from pb-manager.js: >>>${result.stdout}<<<`));
       return {
         success: false,
         error: "Failed to parse JSON output from command",
         stdout: result.stdout,
+        rawStdout: result.stdout,
       };
     }
   }
@@ -146,11 +149,13 @@ app.post("/api/v1/instances/:name/start", async (req, res) => {
   const result = executePbManagerCommand(`${action} ${name}`);
   if (result.success) {
     res.json({
+      success: true,
       message: `Instance ${name} ${action} command issued.`,
       output: result.data,
     });
   } else {
     res.status(500).json({
+      success: false,
       error: `Failed to ${action} instance ${name}`,
       details: result.stderr || result.stdout,
     });
@@ -166,11 +171,13 @@ app.post("/api/v1/instances/:name/stop", async (req, res) => {
   const result = executePbManagerCommand(`${action} ${name}`);
   if (result.success) {
     res.json({
+      success: true,
       message: `Instance ${name} ${action} command issued.`,
       output: result.data,
     });
   } else {
     res.status(500).json({
+      success: false,
       error: `Failed to ${action} instance ${name}`,
       details: result.stderr || result.stdout,
     });
@@ -186,11 +193,13 @@ app.post("/api/v1/instances/:name/restart", async (req, res) => {
   const result = executePbManagerCommand(`${action} ${name}`);
   if (result.success) {
     res.json({
+      success: true,
       message: `Instance ${name} ${action} command issued.`,
       output: result.data,
     });
   } else {
     res.status(500).json({
+      success: false,
       error: `Failed to ${action} instance ${name}`,
       details: result.stderr || result.stdout,
     });
@@ -211,6 +220,7 @@ app.post("/api/v1/instances", async (req, res) => {
       error: result.error || "Failed to add instance",
       details: result.details || result.stderr,
       messages: result.messages,
+      rawStdout: result.rawStdout,
     });
   }
 });
@@ -231,6 +241,7 @@ app.delete("/api/v1/instances/:name", async (req, res) => {
       error: result.error || `Failed to remove instance ${name}`,
       details: result.details || result.stderr,
       messages: result.messages,
+      rawStdout: result.rawStdout,
     });
   }
 });
@@ -258,6 +269,7 @@ app.get("/api/v1/system/global-stats", async (req, res) => {
       error: result.error || "Failed to get global stats",
       details: result.details || result.stderr,
       messages: result.messages,
+      rawStdout: result.rawStdout,
     });
   }
 });
@@ -271,13 +283,14 @@ app.get("/api/v1/instances/:name/logs", async (req, res) => {
 
   const result = executePbManagerCommand("getInstanceLogs", true, true, { name, lines: Number.parseInt(lines, 10) });
   if (result.success) {
-    res.json(result.data);
+    res.json(result);
   } else {
     const statusCode = result.error?.includes("not found") ? 404 : 500;
     res.status(statusCode).json({
       error: result.error || `Failed to get logs for instance ${name}`,
       details: result.details || result.stderr,
       messages: result.messages,
+      rawStdout: result.rawStdout,
     });
   }
 });
@@ -295,6 +308,7 @@ app.post("/api/v1/instances/clone", async (req, res) => {
       error: result.error || "Failed to clone instance",
       details: result.details || result.stderr,
       messages: result.messages,
+      rawStdout: result.rawStdout,
     });
   }
 });
@@ -314,6 +328,7 @@ app.post("/api/v1/instances/:name/reset", async (req, res) => {
       error: result.error || `Failed to reset instance ${name}`,
       details: result.details || result.stderr,
       messages: result.messages,
+      rawStdout: result.rawStdout,
     });
   }
 });
@@ -335,6 +350,7 @@ app.post("/api/v1/instances/:name/reset-admin", async (req, res) => {
       error: result.error || `Failed to reset admin password for instance ${name}`,
       details: result.details || result.stderr,
       messages: result.messages,
+      rawStdout: result.rawStdout,
     });
   }
 });
@@ -349,6 +365,7 @@ app.post("/api/v1/certificates/renew", async (req, res) => {
       error: result.error || "Failed to renew certificates",
       details: result.details || result.stderr,
       messages: result.messages,
+      rawStdout: result.rawStdout,
     });
   }
 });
@@ -362,6 +379,7 @@ app.post("/api/v1/pocketbase/update-executable", async (req, res) => {
       error: result.error || "Failed to update PocketBase executable",
       details: result.details || result.stderr,
       messages: result.messages,
+      rawStdout: result.rawStdout,
     });
   }
 });
@@ -375,6 +393,7 @@ app.post("/api/v1/system/update-ecosystem", async (req, res) => {
       error: result.error || "Failed to update ecosystem and reload PM2",
       details: result.details || result.stderr,
       messages: result.messages,
+      rawStdout: result.rawStdout,
     });
   }
 });
@@ -392,6 +411,7 @@ app.post("/api/v1/cli-config/default-certbot-email", async (req, res) => {
       error: result.error || "Failed to set default Certbot email",
       details: result.details || result.stderr,
       messages: result.messages,
+      rawStdout: result.rawStdout,
     });
   }
 });
@@ -399,7 +419,10 @@ app.post("/api/v1/cli-config/default-certbot-email", async (req, res) => {
 app.get("/api/v1/system/status", (req, res) => {
   try {
     const cpus = os.cpus();
-    const cpuInfo = cpus.map((cpu) => ({ model: cpu.model, speed: cpu.speed }));
+    const cpuInfo = [];
+    for (let i = 0; i < cpus.length; i++) {
+      cpuInfo.push({ model: cpus[i].model, speed: cpus[i].speed });
+    }
     const status = {
       hostname: os.hostname(),
       platform: os.platform(),
