@@ -105,6 +105,7 @@ function executePbManagerCommand(commandArgs, isJsonOutput = false, useInternal 
       return {
         success: true,
         data: parsed.data !== undefined ? parsed.data : parsed,
+        messages: parsed.messages,
       };
     } catch (e) {
       console.error(chalk.red(`API command JSON parse error: ${e.message}\nStdout: ${result.stdout}`));
@@ -115,7 +116,7 @@ function executePbManagerCommand(commandArgs, isJsonOutput = false, useInternal 
       };
     }
   }
-  return { success: true, data: result.stdout };
+  return { success: true, data: result.stdout, messages: [] };
 }
 
 app.get("/api/v1/instances", async (req, res) => {
@@ -204,11 +205,12 @@ app.post("/api/v1/instances", async (req, res) => {
 
   const result = executePbManagerCommand("addInstance", true, true, instanceDetails);
   if (result.success) {
-    res.status(201).json(result.data);
+    res.status(201).json(result);
   } else {
     res.status(400).json({
       error: result.error || "Failed to add instance",
       details: result.details || result.stderr,
+      messages: result.messages,
     });
   }
 });
@@ -223,11 +225,12 @@ app.delete("/api/v1/instances/:name", async (req, res) => {
     name,
   });
   if (result.success) {
-    res.json(result.data);
+    res.json(result);
   } else {
     res.status(500).json({
       error: result.error || `Failed to remove instance ${name}`,
       details: result.details || result.stderr,
+      messages: result.messages,
     });
   }
 });
@@ -243,6 +246,123 @@ app.get("/api/v1/cli-config", async (req, res) => {
   } catch (error) {
     console.error(chalk.red(`API GET /cli-config error: ${error.message}`));
     res.status(500).json({ error: "Failed to read CLI configuration", details: error.message });
+  }
+});
+
+app.get("/api/v1/system/global-stats", async (req, res) => {
+  const result = executePbManagerCommand("getGlobalStats", true, true);
+  if (result.success) {
+    res.json(result.data);
+  } else {
+    res.status(500).json({
+      error: result.error || "Failed to get global stats",
+      details: result.details || result.stderr,
+      messages: result.messages,
+    });
+  }
+});
+
+app.get("/api/v1/instances/:name/logs", async (req, res) => {
+  const { name } = req.params;
+  const lines = req.query.lines || 100;
+  if (!/^[a-zA-Z0-9-]+$/.test(name)) {
+    return res.status(400).json({ error: "Invalid instance name format." });
+  }
+
+  const result = executePbManagerCommand("getInstanceLogs", true, true, { name, lines: Number.parseInt(lines, 10) });
+  if (result.success) {
+    res.json(result.data);
+  } else {
+    const statusCode = result.error?.includes("not found") ? 404 : 500;
+    res.status(statusCode).json({
+      error: result.error || `Failed to get logs for instance ${name}`,
+      details: result.details || result.stderr,
+      messages: result.messages,
+    });
+  }
+});
+
+app.post("/api/v1/instances/clone", async (req, res) => {
+  const cloneDetails = req.body;
+  if (!cloneDetails.sourceName || !cloneDetails.newName || !cloneDetails.domain || !cloneDetails.port) {
+    return res.status(400).json({ error: "Missing required fields for clone: sourceName, newName, domain, port" });
+  }
+  const result = executePbManagerCommand("cloneInstance", true, true, cloneDetails);
+  if (result.success) {
+    res.status(201).json(result);
+  } else {
+    res.status(400).json({
+      error: result.error || "Failed to clone instance",
+      details: result.details || result.stderr,
+      messages: result.messages,
+    });
+  }
+});
+
+app.post("/api/v1/instances/:name/reset", async (req, res) => {
+  const { name } = req.params;
+  const resetDetails = req.body || {};
+  if (!/^[a-zA-Z0-9-]+$/.test(name)) {
+    return res.status(400).json({ error: "Invalid instance name format." });
+  }
+  const payload = { name, ...resetDetails };
+  const result = executePbManagerCommand("resetInstance", true, true, payload);
+  if (result.success) {
+    res.json(result);
+  } else {
+    res.status(500).json({
+      error: result.error || `Failed to reset instance ${name}`,
+      details: result.details || result.stderr,
+      messages: result.messages,
+    });
+  }
+});
+
+app.post("/api/v1/instances/:name/reset-admin", async (req, res) => {
+  const { name } = req.params;
+  const { adminEmail, adminPassword } = req.body;
+  if (!/^[a-zA-Z0-9-]+$/.test(name)) {
+    return res.status(400).json({ error: "Invalid instance name format." });
+  }
+  if (!adminEmail || !adminPassword) {
+    return res.status(400).json({ error: "Missing adminEmail or adminPassword in payload." });
+  }
+  const result = executePbManagerCommand("resetAdminPassword", true, true, { name, adminEmail, adminPassword });
+  if (result.success) {
+    res.json(result);
+  } else {
+    res.status(500).json({
+      error: result.error || `Failed to reset admin password for instance ${name}`,
+      details: result.details || result.stderr,
+      messages: result.messages,
+    });
+  }
+});
+
+app.post("/api/v1/certificates/renew", async (req, res) => {
+  const { instanceName, force } = req.body;
+  const result = executePbManagerCommand("renewCertificates", true, true, { instanceName, force });
+  if (result.success) {
+    res.json(result);
+  } else {
+    res.status(500).json({
+      error: result.error || "Failed to renew certificates",
+      details: result.details || result.stderr,
+      messages: result.messages,
+    });
+  }
+});
+
+app.post("/api/v1/pocketbase/update-executable", async (req, res) => {
+  const result = executePbManagerCommand("updatePocketBaseExecutable", true, true);
+  if (result.success) {
+    res.json(result);
+  } else {
+    res.status(500).json({
+      error: result.error || "Failed to update PocketBase executable",
+      details: result.details || result.stderr,
+      messages: result.messages,
+    });
   }
 });
 
