@@ -16,12 +16,25 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m'
 
-info() { echo -e "${GREEN}[INFO]${NC} $1"; }
-warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
-error() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
-success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
+PACMAN_SYU_DONE=0
 
-command_exists() { command -v "$1" >/dev/null 2>&1; }
+info() {
+  echo -e "${GREEN}[INFO]${NC} $1"
+}
+warn() {
+  echo -e "${YELLOW}[WARN]${NC} $1"
+}
+error() {
+  echo -e "${RED}[ERROR]${NC} $1"
+  exit 1
+}
+success() {
+  echo -e "${GREEN}[SUCCESS]${NC} $1"
+}
+
+command_exists() {
+  command -v "$1" >/dev/null 2>&1
+}
 
 is_wsl() {
   grep -qi microsoft /proc/version 2>/dev/null
@@ -40,14 +53,27 @@ prompt_enable_systemd_wsl2() {
   echo -e "${YELLOW}To enable systemd in WSL2, you typically add the following to /etc/wsl.conf:${NC}"
   echo -e "${YELLOW}\n[boot]\nsystemd=true\n${NC}"
   echo -e "${YELLOW}After creating or modifying /etc/wsl.conf, you must fully shut down your WSL instance from PowerShell/CMD (e.g., 'wsl --shutdown') and then restart it.${NC}"
+  local enable_systemd
   read -p "Do you want this script to attempt to add 'systemd=true' to /etc/wsl.conf for you? [y/N]: " enable_systemd
   if [[ "$enable_systemd" =~ ^[Yy]$ ]]; then
-    if [ ! -f /etc/wsl.conf ] || ! grep -q "\[boot\]" /etc/wsl.conf; then
-      echo -e "\n[boot]" | sudo tee -a /etc/wsl.conf > /dev/null
+    local wsl_conf_file="/etc/wsl.conf"
+    local wsl_conf_updated=0
+
+    if [ ! -f "$wsl_conf_file" ] || ! grep -q "^\s*\[boot\]" "$wsl_conf_file" 2>/dev/null; then
+      if [ -s "$wsl_conf_file" ] && [ "$(tail -c1 "$wsl_conf_file"; echo x)" != $'\nx' ]; then
+        echo | tee -a "$wsl_conf_file" > /dev/null
+      fi
+      echo -e "\n[boot]" | tee -a "$wsl_conf_file" > /dev/null
+      wsl_conf_updated=1
     fi
-    if ! grep -q "systemd=true" /etc/wsl.conf; then
-      echo "systemd=true" | sudo tee -a /etc/wsl.conf > /dev/null
-      success "systemd has been enabled in /etc/wsl.conf."
+
+    if ! grep -q "^\s*systemd\s*=\s*true" "$wsl_conf_file" 2>/dev/null; then
+      echo "systemd=true" | tee -a "$wsl_conf_file" > /dev/null
+      wsl_conf_updated=1
+    fi
+
+    if [ "$wsl_conf_updated" -eq 1 ]; then
+      success "systemd configuration has been updated in /etc/wsl.conf."
       warn "IMPORTANT: Now exit WSL, run \"wsl --shutdown\" in your Windows terminal, then restart your WSL2 instance and run this script again."
       exit 0
     else
@@ -66,12 +92,12 @@ check_distro() {
     info "Detected Debian-based system (apt)."
   elif command_exists dnf; then
     PKG_MANAGER="dnf"
-    UPDATE_CMD="dnf check-update -y || true"
+    UPDATE_CMD="dnf makecache --timer"
     INSTALL_CMD="dnf install -y"
     info "Detected Fedora/RHEL/Oracle-based system (dnf)."
   elif command_exists pacman; then
     PKG_MANAGER="pacman"
-    UPDATE_CMD="pacman -Sy"
+    UPDATE_CMD="pacman -Sy --noconfirm"
     INSTALL_CMD="pacman -S --noconfirm"
     info "Detected Arch-based system (pacman)."
   else
@@ -86,48 +112,53 @@ fi
 check_distro
 
 if is_wsl2; then
-  if ! pgrep -x systemd >/dev/null 2>&1 && ! systemctl is-system-running --quiet --wait; then
+  if ! pgrep -x systemd >/dev/null 2>&1 && ! systemctl is-system-running --quiet --wait 2>/dev/null; then
     prompt_enable_systemd_wsl2
   else
     info "WSL2 detected and systemd appears to be running."
   fi
 fi
 
-info "Updating package lists (this may take a moment)..."
+info "Updating package lists and system (this may take a moment for Arch)..."
 if [ "$PKG_MANAGER" = "pacman" ]; then
-  sudo pacman -Syu --noconfirm > /dev/null 2>&1 || error "Failed to update package lists."
+  pacman -Syu --noconfirm > /dev/null 2>&1 || error "Failed to update system."
+  PACMAN_SYU_DONE=1
 else
-  sudo ${UPDATE_CMD} > /dev/null 2>&1 || error "Failed to update package lists."
+  ${UPDATE_CMD} > /dev/null 2>&1 || error "Failed to update package lists."
 fi
 
 ESSENTIAL_TOOLS="curl git openssl"
 info "Ensuring essential tools (${ESSENTIAL_TOOLS}) are installed..."
-sudo ${INSTALL_CMD} ${ESSENTIAL_TOOLS} > /dev/null 2>&1 || error "Failed to install essential tools."
+${INSTALL_CMD} ${ESSENTIAL_TOOLS} > /dev/null 2>&1 || error "Failed to install essential tools."
 
 if command_exists node && command_exists npm; then
   NODE_VERSION_RAW=$(node -v)
   NPM_VERSION_RAW=$(npm -v)
   info "Node.js and npm are already installed."
-  if [[ "$(echo "$NODE_VERSION_RAW" | cut -d. -f1 | sed 's/v//')" -lt 18 ]]; then
-    warn "Installed Node.js version is $NODE_VERSION_RAW, which is older than v18.x. pb-manager recommends v18.x or newer. Consider upgrading Node.js."
+  if [[ "$(echo "$NODE_VERSION_RAW" | cut -d. -f1 | sed 's/v//')" -lt 20 ]]; then
+    warn "Installed Node.js version is $NODE_VERSION_RAW, which is older than v20.x. pb-manager recommends v20.x or newer. Consider upgrading Node.js."
   else
     info "Node version: $NODE_VERSION_RAW, npm version: $NPM_VERSION_RAW"
   fi
 else
-  info "Node.js (v18.x) and npm are not found."
-  read -p "Do you want to install Node.js v18.x and npm now? [Y/n]: " install_node
+  info "Node.js (v20.x) and npm are not found."
+  read -p "Do you want to install Node.js v20.x and npm now? [Y/n]: " install_node
   if [[ "$install_node" =~ ^[Nn]$ ]]; then
     error "Node.js and npm are required. Installation aborted."
   fi
-  info "Installing Node.js (v18.x) and npm..."
+  info "Installing Node.js (v20.x) and npm..."
   if [ "$PKG_MANAGER" = "apt" ]; then
-    curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash - > /dev/null 2>&1
-    sudo apt-get install -y nodejs > /dev/null 2>&1 || error "Failed to install Node.js."
+    curl -fsSL https://deb.nodesource.com/setup_20.x | bash - > /dev/null 2>&1
+    apt-get install -y nodejs > /dev/null 2>&1 || error "Failed to install Node.js."
   elif [ "$PKG_MANAGER" = "dnf" ]; then
-    curl -fsSL https://rpm.nodesource.com/setup_18.x | sudo -E bash - > /dev/null 2>&1
-    sudo dnf install -y nodejs > /dev/null 2>&1 || error "Failed to install Node.js."
+    curl -fsSL https://rpm.nodesource.com/setup_20.x | bash - > /dev/null 2>&1
+    dnf install -y nodejs > /dev/null 2>&1 || error "Failed to install Node.js."
   elif [ "$PKG_MANAGER" = "pacman" ]; then
-    sudo pacman -S --noconfirm nodejs npm > /dev/null 2>&1 || error "Failed to install Node.js and npm."
+    pacman -S --noconfirm nodejs npm > /dev/null 2>&1 || error "Failed to install Node.js and npm."
+    NODE_VERSION_RAW_PACMAN=$(node -v 2>/dev/null || echo "v0.0.0")
+    if [[ "$(echo "$NODE_VERSION_RAW_PACMAN" | cut -d. -f1 | sed 's/v//')" -lt 20 ]]; then
+      warn "Installed Node.js version on Arch is $NODE_VERSION_RAW_PACMAN, which is older than recommended v20.x. pb-manager might have issues. Consider using a Node version manager (like nvm) to install Node v20+."
+    fi
   fi
   success "Node.js and npm installed successfully."
   info "Node version: $(node -v), npm version: $(npm -v)"
@@ -142,27 +173,35 @@ else
     error "PM2 is required. Installation aborted."
   fi
   info "Installing PM2 globally..."
-  sudo npm install -g pm2 > /dev/null 2>&1 || error "Failed to install PM2."
+  npm install -g pm2 > /dev/null 2>&1 || error "Failed to install PM2."
   success "PM2 installed successfully."
 fi
 
 info "Configuring PM2 to start on system boot..."
 if command_exists pm2; then
-  PM2_STARTUP_CMD_OUTPUT=$(sudo pm2 startup systemd -u root --hp "$HOME" 2>&1) || PM2_STARTUP_CMD_OUTPUT=$(sudo pm2 startup systemd -u root --hp /root 2>&1)
+  PM2_HP="/root"
+  PM2_STARTUP_CMD_OUTPUT=""
+  info "Attempting to configure PM2 startup for user root with home path ${PM2_HP}..."
+  if PM2_STARTUP_CMD_OUTPUT=$(pm2 startup systemd -u root --hp "${PM2_HP}" 2>&1); then
+    info "PM2 startup command executed."
+  else
+    EXIT_CODE=$?
+    warn "PM2 startup command failed or produced warnings (exit code ${EXIT_CODE}). Output was:"
+    echo -e "${YELLOW}${PM2_STARTUP_CMD_OUTPUT}${NC}"
+  fi
 
   if echo "$PM2_STARTUP_CMD_OUTPUT" | grep -q "command"; then
     warn "PM2 startup configuration might require you to run a command manually."
-    echo -e "${YELLOW}PM2 output:${NC}\n$PM2_STARTUP_CMD_OUTPUT"
-    echo -e "${YELLOW}Please copy and run the command provided by PM2 if necessary.${NC}"
+    echo -e "${YELLOW}PM2 output (if any relevant command is shown, please execute it):${NC}\n$PM2_STARTUP_CMD_OUTPUT"
     read -p "Press [Enter] to continue after reviewing/running the command, or [S] to skip PM2 save..." continue_key
     if [[ "$continue_key" =~ ^[Ss]$ ]]; then
       warn "Skipping pm2 save."
     else
-      sudo pm2 save --force > /dev/null 2>&1 || warn "Failed to save PM2 process list. This might be okay if no processes are running yet."
+      pm2 save --force > /dev/null 2>&1 || warn "Failed to save PM2 process list. This might be okay if no processes are running yet."
     fi
   else
-    info "PM2 startup command executed."
-    sudo pm2 save --force > /dev/null 2>&1 || warn "Failed to save PM2 process list."
+    info "PM2 startup command processed. Saving current PM2 process list (if any)..."
+    pm2 save --force > /dev/null 2>&1 || warn "Failed to save PM2 process list."
   fi
   success "PM2 startup configured (or attempted)."
 else
@@ -178,18 +217,18 @@ else
     error "Nginx is required. Installation aborted."
   fi
   info "Installing Nginx..."
-  sudo ${INSTALL_CMD} nginx > /dev/null 2>&1 || error "Failed to install Nginx."
+  ${INSTALL_CMD} nginx > /dev/null 2>&1 || error "Failed to install Nginx."
   success "Nginx installed successfully."
 fi
 
 info "Ensuring Nginx is started and enabled on boot..."
 if command_exists systemctl; then
-  sudo systemctl start nginx > /dev/null 2>&1 || warn "Failed to start Nginx. It might already be running or there might be a configuration issue."
-  sudo systemctl enable nginx > /dev/null 2>&1 || warn "Failed to enable Nginx on boot."
+  systemctl start nginx > /dev/null 2>&1 || warn "Failed to start Nginx. It might already be running or there might be a configuration issue."
+  systemctl enable nginx > /dev/null 2>&1 || warn "Failed to enable Nginx on boot."
 else
   warn "systemctl not found. Attempting to manage Nginx directly. This might not ensure it starts on boot."
-  if sudo nginx -t > /dev/null 2>&1; then
-    sudo nginx -s reload > /dev/null 2>&1 || sudo nginx > /dev/null 2>&1 || warn "Tried to reload/start Nginx directly, but it might have failed."
+  if nginx -t > /dev/null 2>&1; then
+    nginx -s reload > /dev/null 2>&1 || nginx > /dev/null 2>&1 || warn "Tried to reload/start Nginx directly, but it might have failed."
   else
     warn "Nginx configuration test failed. Nginx not started/reloaded."
   fi
@@ -206,13 +245,16 @@ else
   else
     info "Installing Certbot and its Nginx plugin..."
     if [ "$PKG_MANAGER" = "apt" ]; then
-      sudo ${INSTALL_CMD} certbot python3-certbot-nginx > /dev/null 2>&1 || sudo ${INSTALL_CMD} certbot certbot-nginx > /dev/null 2>&1 || error "Failed to install Certbot or its Nginx plugin."
+      ${INSTALL_CMD} certbot python3-certbot-nginx > /dev/null 2>&1 || ${INSTALL_CMD} certbot certbot-nginx > /dev/null 2>&1 || error "Failed to install Certbot or its Nginx plugin."
     elif [ "$PKG_MANAGER" = "dnf" ]; then
-      sudo ${INSTALL_CMD} epel-release > /dev/null 2>&1 || true
-      sudo ${INSTALL_CMD} certbot python3-certbot-nginx > /dev/null 2>&1 || sudo ${INSTALL_CMD} certbot certbot-nginx > /dev/null 2>&1 || error "Failed to install Certbot or its Nginx plugin."
+      ${INSTALL_CMD} epel-release > /dev/null 2>&1 || true
+      ${INSTALL_CMD} certbot python3-certbot-nginx > /dev/null 2>&1 || ${INSTALL_CMD} certbot certbot-nginx > /dev/null 2>&1 || error "Failed to install Certbot or its Nginx plugin."
     elif [ "$PKG_MANAGER" = "pacman" ]; then
-      sudo pacman -Syu --noconfirm > /dev/null 2>&1 || true
-      sudo pacman -S --noconfirm certbot certbot-nginx > /dev/null 2>&1 || error "Failed to install Certbot or its Nginx plugin."
+      if [ "$PACMAN_SYU_DONE" -eq 0 ]; then
+        pacman -Syu --noconfirm > /dev/null 2>&1 || warn "Full system update before certbot failed or was skipped."
+      fi
+      pacman -Sy --noconfirm > /dev/null 2>&1 || warn "Failed to refresh package lists before certbot install."
+      pacman -S --noconfirm certbot certbot-nginx > /dev/null 2>&1 || error "Failed to install Certbot or its Nginx plugin."
     fi
     success "Certbot and Nginx plugin installed successfully."
   fi
@@ -226,15 +268,15 @@ if [ -f "${PB_MANAGER_INSTALL_DIR}/pb-manager.js" ]; then
     info "Skipping download of pb-manager.js. Using existing version."
   else
     info "Downloading pb-manager.js from ${PB_MANAGER_SCRIPT_URL}..."
-    sudo curl -fsSL "${PB_MANAGER_SCRIPT_URL}" -o "${PB_MANAGER_INSTALL_DIR}/pb-manager.js" || error "Failed to download pb-manager.js."
-    sudo chmod +x "${PB_MANAGER_INSTALL_DIR}/pb-manager.js" || error "Failed to make pb-manager.js executable."
+    curl -fsSL "${PB_MANAGER_SCRIPT_URL}" -o "${PB_MANAGER_INSTALL_DIR}/pb-manager.js" || error "Failed to download pb-manager.js."
+    chmod +x "${PB_MANAGER_INSTALL_DIR}/pb-manager.js" || error "Failed to make pb-manager.js executable."
     success "pb-manager.js downloaded/updated and made executable."
   fi
 else
-  sudo mkdir -p "${PB_MANAGER_INSTALL_DIR}" || error "Failed to create directory ${PB_MANAGER_INSTALL_DIR}."
+  mkdir -p "${PB_MANAGER_INSTALL_DIR}" || error "Failed to create directory ${PB_MANAGER_INSTALL_DIR}."
   info "Downloading pb-manager.js from ${PB_MANAGER_SCRIPT_URL}..."
-  sudo curl -fsSL "${PB_MANAGER_SCRIPT_URL}" -o "${PB_MANAGER_INSTALL_DIR}/pb-manager.js" || error "Failed to download pb-manager.js."
-  sudo chmod +x "${PB_MANAGER_INSTALL_DIR}/pb-manager.js" || error "Failed to make pb-manager.js executable."
+  curl -fsSL "${PB_MANAGER_SCRIPT_URL}" -o "${PB_MANAGER_INSTALL_DIR}/pb-manager.js" || error "Failed to download pb-manager.js."
+  chmod +x "${PB_MANAGER_INSTALL_DIR}/pb-manager.js" || error "Failed to make pb-manager.js executable."
   success "pb-manager.js downloaded and made executable."
 fi
 
@@ -250,45 +292,45 @@ if [[ "$install_deps" =~ ^[Nn]$ ]]; then
 else
   if [ ! -f "package.json" ]; then
     info "No package.json found for CLI, creating one..."
-    sudo npm init -y > /dev/null 2>&1 || warn "npm init -y failed, proceeding with CLI dependency installation."
+    npm init -y > /dev/null 2>&1 || warn "npm init -y failed, proceeding with CLI dependency installation."
   fi
-  sudo npm install ${PB_MANAGER_DEPS} > /dev/null 2>&1 || error "Failed to install pb-manager CLI dependencies."
+  npm install --save ${PB_MANAGER_DEPS} > /dev/null 2>&1 || error "Failed to install pb-manager CLI dependencies."
   success "pb-manager CLI dependencies installed/updated."
 fi
 cd "${ORIGINAL_DIR}"
 
 info "Creating symlink for pb-manager CLI at ${PB_MANAGER_SYMLINK_PATH}..."
-sudo ln -sfn "${PB_MANAGER_INSTALL_DIR}/pb-manager.js" "${PB_MANAGER_SYMLINK_PATH}" || error "Failed to create symlink for pb-manager."
+ln -sfn "${PB_MANAGER_INSTALL_DIR}/pb-manager.js" "${PB_MANAGER_SYMLINK_PATH}" || error "Failed to create symlink for pb-manager."
 success "Symlink created. You can now use 'pb-manager' command (you might need to open a new terminal session)."
 
 if command_exists ufw; then
   info "Configuring firewall (UFW) to allow Nginx traffic (HTTP/HTTPS)..."
-  sudo ufw allow 'Nginx Full' > /dev/null 2>&1 || warn "Failed to set UFW rule for 'Nginx Full'. You may need to configure your firewall manually."
+  ufw allow 'Nginx Full' > /dev/null 2>&1 || warn "Failed to set UFW rule for 'Nginx Full'. You may need to configure your firewall manually."
   success "Firewall rules for Nginx (HTTP/HTTPS) applied/checked."
   info "Current UFW status:"
-  sudo ufw status verbose
+  ufw status verbose
 elif command_exists firewall-cmd; then
   info "Configuring firewall (firewalld) to allow Nginx traffic (HTTP/HTTPS)..."
-  sudo firewall-cmd --permanent --add-service=http > /dev/null 2>&1 || warn "Failed to add HTTP service to firewalld."
-  sudo firewall-cmd --permanent --add-service=https > /dev/null 2>&1 || warn "Failed to add HTTPS service to firewalld."
-  sudo firewall-cmd --reload > /dev/null 2>&1 || warn "Failed to reload firewalld."
+  firewall-cmd --permanent --add-service=http > /dev/null 2>&1 || warn "Failed to add HTTP service to firewalld."
+  firewall-cmd --permanent --add-service=https > /dev/null 2>&1 || warn "Failed to add HTTPS service to firewalld."
+  firewall-cmd --reload > /dev/null 2>&1 || warn "Failed to reload firewalld."
   success "Firewall rules for Nginx (HTTP/HTTPS) applied/checked."
   info "Current firewalld active services:"
-  sudo firewall-cmd --list-services
+  firewall-cmd --list-services
 else
   warn "No UFW or firewalld found. Please configure your firewall manually to allow HTTP (80) and HTTPS (443) traffic if needed."
 fi
 
 read -p "Do you want to run pb-manager CLI setup now to download PocketBase binaries? [Y/n]: " run_cli_setup
 if [[ "$run_cli_setup" =~ ^[Nn]$ ]]; then
-  info "You can run CLI setup later with: sudo pb-manager setup"
+  info "You can run CLI setup later with: pb-manager setup"
 else
   info "Running pb-manager CLI setup to download PocketBase binaries..."
-  sudo "${PB_MANAGER_SYMLINK_PATH}" setup || error "CLI Setup failed. Please try running it manually later with: sudo pb-manager setup"
+  "${PB_MANAGER_SYMLINK_PATH}" setup
   if [ $? -eq 0 ]; then
     success "CLI Setup completed successfully."
   else
-    error "CLI Setup encountered errors."
+    error "CLI Setup encountered errors. Please try running it manually later with: pb-manager setup"
   fi
 fi
 
@@ -302,14 +344,14 @@ if [[ "$setup_api_server" =~ ^[Yy]$ ]]; then
       info "Skipping download of pb-manager-api.js. Using existing version."
     else
       info "Downloading pb-manager-api.js from ${PB_MANAGER_API_SCRIPT_URL}..."
-      sudo curl -fsSL "${PB_MANAGER_API_SCRIPT_URL}" -o "${PB_MANAGER_INSTALL_DIR}/pb-manager-api.js" || error "Failed to download pb-manager-api.js."
-      sudo chmod +x "${PB_MANAGER_INSTALL_DIR}/pb-manager-api.js" || error "Failed to make pb-manager-api.js executable."
+      curl -fsSL "${PB_MANAGER_API_SCRIPT_URL}" -o "${PB_MANAGER_INSTALL_DIR}/pb-manager-api.js" || error "Failed to download pb-manager-api.js."
+      chmod +x "${PB_MANAGER_INSTALL_DIR}/pb-manager-api.js" || error "Failed to make pb-manager-api.js executable."
       success "pb-manager-api.js downloaded/updated and made executable."
     fi
   else
     info "Downloading pb-manager-api.js from ${PB_MANAGER_API_SCRIPT_URL}..."
-    sudo curl -fsSL "${PB_MANAGER_API_SCRIPT_URL}" -o "${PB_MANAGER_INSTALL_DIR}/pb-manager-api.js" || error "Failed to download pb-manager-api.js."
-    sudo chmod +x "${PB_MANAGER_INSTALL_DIR}/pb-manager-api.js" || error "Failed to make pb-manager-api.js executable."
+    curl -fsSL "${PB_MANAGER_API_SCRIPT_URL}" -o "${PB_MANAGER_INSTALL_DIR}/pb-manager-api.js" || error "Failed to download pb-manager-api.js."
+    chmod +x "${PB_MANAGER_INSTALL_DIR}/pb-manager-api.js" || error "Failed to make pb-manager-api.js executable."
     success "pb-manager-api.js downloaded and made executable."
   fi
 
@@ -317,7 +359,7 @@ if [[ "$setup_api_server" =~ ^[Yy]$ ]]; then
   ORIGINAL_DIR_API=$(pwd)
   cd "${PB_MANAGER_INSTALL_DIR}" || error "Failed to change directory to ${PB_MANAGER_INSTALL_DIR} for API deps."
 
-  PB_MANAGER_API_DEPS="express body-parser dotenv"
+  PB_MANAGER_API_DEPS="express body-parser dotenv zod express-rate-limit"
   info "Required API server dependencies: ${PB_MANAGER_API_DEPS}"
   read -p "Do you want to install/update these API server dependencies now? [Y/n]: " install_api_deps
   if [[ "$install_api_deps" =~ ^[Nn]$ ]]; then
@@ -325,9 +367,9 @@ if [[ "$setup_api_server" =~ ^[Yy]$ ]]; then
   else
     if [ ! -f "package.json" ]; then
       info "No package.json found, creating one (this might overwrite if one was created for CLI deps only)..."
-      sudo npm init -y > /dev/null 2>&1 || warn "npm init -y failed, proceeding with API dependency installation."
+      npm init -y > /dev/null 2>&1 || warn "npm init -y failed, proceeding with API dependency installation."
     fi
-    sudo npm install ${PB_MANAGER_API_DEPS} > /dev/null 2>&1 || error "Failed to install pb-manager API server dependencies."
+    npm install --save ${PB_MANAGER_API_DEPS} > /dev/null 2>&1 || error "Failed to install pb-manager API server dependencies."
     success "pb-manager API server dependencies installed/updated."
   fi
   cd "${ORIGINAL_DIR_API}"
@@ -343,7 +385,6 @@ if [[ "$setup_api_server" =~ ^[Yy]$ ]]; then
 else
   info "Skipping setup of the optional pb-manager API server."
 fi
-
 
 success "-------------------------------------------------------"
 if [[ "$run_cli_setup" =~ ^[Yy]$ ]]; then
