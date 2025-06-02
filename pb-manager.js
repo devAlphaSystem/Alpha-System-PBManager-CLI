@@ -40,7 +40,7 @@ let NGINX_SITES_AVAILABLE = "/etc/nginx/sites-available";
 let NGINX_SITES_ENABLED = "/etc/nginx/sites-enabled";
 let NGINX_DISTRO_MODE = "debian";
 
-const pbManagerVersion = "0.5.0 rc2";
+const pbManagerVersion = "0.5.0";
 
 async function safeRunCommand(command, args = [], errorMessage, ignoreError = false, options = {}) {
   return new Promise((resolve, reject) => {
