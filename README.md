@@ -4,7 +4,7 @@
 
 It supports Debian-based (like Ubuntu), RHEL-based (like Fedora, CentOS, Oracle Linux), and Arch-based Linux distributions.
 
-**Version: 0.5.0 rc1**
+**Version: 0.5.0 rc2**
 
 ## Key Features
 
@@ -52,17 +52,13 @@ The automated installer attempts to install/verify most of these.
     ```bash
     sudo curl -fsSL https://raw.githubusercontent.com/devAlphaSystem/Alpha-System-PBManager/main/install-pb-manager.sh -o /tmp/install-pb-manager.sh && sudo bash /tmp/install-pb-manager.sh && sudo rm /tmp/install-pb-manager.sh
     ```
-    This script will guide you through the installation of `pb-manager`, its dependencies, and optionally the API server.
+    This script will guide you through the installation of `pb-manager` and its dependencies.
 
 ## Documentation
 
-For detailed information on commands, features, manual installation, API server setup, and troubleshooting, please refer to the full documentation:
+For detailed information on commands, features, manual installation, and troubleshooting, please refer to the full documentation:
 
 ➡️ **[DOCUMENTATION](https://docs.alphasystem.dev/view/5hnk7504ca02hpu)**
-
-## Optional API Server
-
-`pb-manager` includes an optional API server (`pb-manager-api.js`) for programmatic control over your PocketBase instances. See [DOCUMENTATION](https://docs.alphasystem.dev/view/5hnk7504ca02hpu) for setup and usage details.
 
 ## Disclaimer
 

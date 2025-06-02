@@ -40,7 +40,7 @@ let NGINX_SITES_AVAILABLE = "/etc/nginx/sites-available";
 let NGINX_SITES_ENABLED = "/etc/nginx/sites-enabled";
 let NGINX_DISTRO_MODE = "debian";
 
-const pbManagerVersion = "0.5.0 rc1";
+const pbManagerVersion = "0.5.0 rc2";
 
 async function safeRunCommand(command, args = [], errorMessage, ignoreError = false, options = {}) {
   return new Promise((resolve, reject) => {
@@ -285,10 +285,6 @@ async function getCliConfig() {
     defaultCertbotEmail: null,
     defaultPocketBaseVersion: latestVersion,
     completeLogging: false,
-    api: {
-      enabled: false,
-      secret: `pbmanager-internal-secret-${Date.now().toString(36)}${Math.random().toString(36).substring(2)}`,
-    },
   };
 
   if (await fs.pathExists(CLI_CONFIG_PATH)) {
@@ -297,7 +293,7 @@ async function getCliConfig() {
       if (!config.defaultPocketBaseVersion || typeof config.defaultPocketBaseVersion !== "string" || !/^\d+\.\d+\.\d+$/.test(config.defaultPocketBaseVersion)) {
         config.defaultPocketBaseVersion = latestVersion;
       }
-      const mergedConfig = { ...defaults, ...config, api: { ...defaults.api, ...(config.api || {}) } };
+      const mergedConfig = { ...defaults, ...config };
       return mergedConfig;
     } catch (e) {
       if (completeLogging) {
@@ -422,9 +418,6 @@ async function downloadPocketBaseIfNotExists(versionOverride = null, interactive
         console.error(chalk.red(`Version ${versionToDownload} not found. Please check the version number.`));
       }
     }
-    if (program.runningCommand && program.runningCommand.name() === "_internal-api-request") {
-      return { success: false, message: error.message, error };
-    }
     if (!interactive) {
       return { success: false, message: `Error downloading or extracting PocketBase v${versionToDownload}: ${error.message}`, error };
     }
@@ -456,9 +449,7 @@ async function updatePm2EcosystemFile() {
   await fs.writeFile(tempEcosystemFile, ecosystemContent);
   await fs.rename(tempEcosystemFile, PM2_ECOSYSTEM_FILE);
 
-  if (!program.runningCommand || program.runningCommand.name() !== "_internal-api-request") {
-    console.log(chalk.green("PM2 ecosystem file updated."));
-  }
+  console.log(chalk.green("PM2 ecosystem file updated."));
   return { success: true, message: "PM2 ecosystem file updated." };
 }
 
@@ -471,15 +462,11 @@ async function reloadPm2(specificInstanceName = null) {
     }
     await safeRunCommand("pm2", ["save"], "Failed to save PM2 state", true);
     const message = specificInstanceName ? `PM2 process ${PM2_INSTANCE_PREFIX}${specificInstanceName} restarted and PM2 state saved.` : "PM2 ecosystem reloaded and PM2 state saved.";
-    if (!program.runningCommand || program.runningCommand.name() !== "_internal-api-request") {
-      console.log(chalk.green(message));
-    }
+    console.log(chalk.green(message));
     return { success: true, message };
   } catch (error) {
     const message = `Failed to reload PM2: ${error.message}`;
-    if (!program.runningCommand || program.runningCommand.name() !== "_internal-api-request") {
-      console.error(chalk.red(message));
-    }
+    console.error(chalk.red(message));
     return { success: false, message, error };
   }
 }
@@ -580,10 +567,8 @@ server {
       await safeRunCommand("sudo", ["ln", "-sfn", nginxConfPath, nginxEnabledPath], `Failed to create Nginx symlink for ${nginxConfPath} to ${nginxEnabledPath}`);
     } catch (error) {
       const errorMsg = `Failed to create Nginx symlink for ${nginxConfPath} to ${nginxEnabledPath}: ${error.message}. Please try running this command with sudo, or create the symlink manually.`;
-      if (!program.runningCommand || program.runningCommand.name() !== "_internal-api-request") {
-        console.error(chalk.red(errorMsg));
-        console.log(chalk.yellow(`Manually run: sudo ln -sfn ${nginxConfPath} ${nginxEnabledPath}`));
-      }
+      console.error(chalk.red(errorMsg));
+      console.log(chalk.yellow(`Manually run: sudo ln -sfn ${nginxConfPath} ${nginxEnabledPath}`));
       throw new Error(errorMsg);
     }
   }
@@ -621,17 +606,13 @@ async function reloadNginx() {
     if (!reloaded) {
       throw new Error("Could not reload Nginx with systemctl, service, or nginx -s reload.");
     }
-    if (!program.runningCommand || program.runningCommand.name() !== "_internal-api-request") {
-      console.log(chalk.green("Nginx reloaded successfully."));
-    }
+    console.log(chalk.green("Nginx reloaded successfully."));
     return { success: true, message: "Nginx reloaded successfully." };
   } catch (error) {
     const errorMsg = `Nginx test failed or reload failed: ${error.message}. Please check Nginx configuration.`;
-    if (!program.runningCommand || program.runningCommand.name() !== "_internal-api-request") {
-      console.error(chalk.red(errorMsg));
-      console.log(chalk.yellow("You can try to diagnose Nginx issues by running: sudo nginx -t"));
-      console.log(chalk.yellow("Check Nginx error logs, typically found in /var/log/nginx/error.log"));
-    }
+    console.error(chalk.red(errorMsg));
+    console.log(chalk.yellow("You can try to diagnose Nginx issues by running: sudo nginx -t"));
+    console.log(chalk.yellow("Check Nginx error logs, typically found in /var/log/nginx/error.log"));
     return { success: false, message: errorMsg, error };
   }
 }
@@ -1579,11 +1560,11 @@ program
 
 program
   .command("configure")
-  .description("Set or view CLI configurations (e.g., default Certbot email, PocketBase version, API settings).")
+  .description("Set or view CLI configurations (e.g., default Certbot email, PocketBase version, logging).")
   .action(async () => {
     await ensureBaseSetup();
     const cliConfig = await getCliConfig();
-    const choices = [{ name: `Default Certbot Email: ${cliConfig.defaultCertbotEmail || "Not set"}`, value: "setEmail" }, { name: `Default PocketBase Version (for setup): ${cliConfig.defaultPocketBaseVersion}`, value: "setPbVersion" }, { name: `Enable complete logging: ${cliConfig.completeLogging ? "Yes" : "No"}`, value: "setLogging" }, new inquirer.Separator("API Settings"), { name: `Enable API Communication: ${cliConfig.api.enabled ? chalk.green("Yes") : chalk.red("No")}`, value: "setApiEnabled" }, { name: `API Internal Secret: ${cliConfig.api.secret ? `${cliConfig.api.secret.substring(0, 8)}...` : "Not Set"}`, value: "setApiSecret" }, new inquirer.Separator(), { name: "View current JSON config", value: "viewConfig" }, { name: "Exit", value: "exit" }];
+    const choices = [{ name: `Default Certbot Email: ${cliConfig.defaultCertbotEmail || "Not set"}`, value: "setEmail" }, { name: `Default PocketBase Version (for setup): ${cliConfig.defaultPocketBaseVersion}`, value: "setPbVersion" }, { name: `Enable complete logging: ${cliConfig.completeLogging ? "Yes" : "No"}`, value: "setLogging" }, new inquirer.Separator(), { name: "View current JSON config", value: "viewConfig" }, { name: "Exit", value: "exit" }];
     const { action } = await inquirer.prompt([{ type: "list", name: "action", message: "CLI Configuration:", choices }]);
 
     switch (action) {
@@ -1608,25 +1589,6 @@ program
         await saveCliConfig(cliConfig);
         completeLogging = enableLogging;
         console.log(chalk.green(`Complete logging is now ${enableLogging ? "enabled" : "disabled"}.`));
-        break;
-      }
-      case "setApiEnabled": {
-        const { apiEnabled } = await inquirer.prompt([{ type: "confirm", name: "apiEnabled", message: "Enable API communication mode (allows external API server to call internal functions)?", default: cliConfig.api.enabled }]);
-        cliConfig.api.enabled = apiEnabled;
-        await saveCliConfig(cliConfig);
-        console.log(chalk.green(`API communication mode is now ${apiEnabled ? "enabled" : "disabled"}.`));
-        break;
-      }
-      case "setApiSecret": {
-        const { newSecret } = await inquirer.prompt([{ type: "password", mask: "*", name: "newSecret", message: "Enter new API internal secret (min 16 chars, leave blank to generate):", validate: (input) => input === "" || input.length >= 16 || "Secret must be at least 16 characters or blank to auto-generate." }]);
-        if (newSecret) {
-          cliConfig.api.secret = newSecret;
-        } else {
-          cliConfig.api.secret = `pbmanager-internal-secret-${Date.now().toString(36)}${Math.random().toString(36).substring(2)}`;
-          console.log(chalk.blue("New API internal secret generated."));
-        }
-        await saveCliConfig(cliConfig);
-        console.log(chalk.green("API internal secret updated."));
         break;
       }
       case "viewConfig":
@@ -2305,115 +2267,9 @@ program
     process.exit(0);
   });
 
-program
-  .command("_internal-api-request", { hidden: true })
-  .description("Internal command for API server communication. Do not use directly.")
-  .requiredOption("--secret <secret>", "Internal API secret")
-  .requiredOption("--action <action>", "Action to perform (e.g., listInstances, addInstance)")
-  .option("--payload <json_payload>", "Base64 encoded JSON payload for the action")
-  .action(async (options) => {
-    let cliConfigForInternalHandling;
-    try {
-      cliConfigForInternalHandling = await getCliConfig();
-      completeLogging = cliConfigForInternalHandling.completeLogging || false;
-    } catch (configError) {
-      console.error(JSON.stringify({ success: false, error: "PBManagerInternal: Failed to load CLI config during internal API request execution. Proceeding with caution.", details: configError.message }));
-      completeLogging = false;
-      cliConfigForInternalHandling = { api: { secret: options.secret, enabled: true }, completeLogging: false, defaultPocketBaseVersion: POCKETBASE_FALLBACK_VERSION };
-    }
-
-    if (!options.secret) {
-      console.error(JSON.stringify({ success: false, error: "PBManagerInternal: Internal API secret is required for _internal-api-request." }));
-      process.exit(1);
-    }
-
-    if (!cliConfigForInternalHandling.api || !cliConfigForInternalHandling.api.enabled) {
-      console.error(JSON.stringify({ success: false, error: "PBManagerInternal: API communication is disabled in CLI config." }));
-      process.exit(1);
-    }
-    if (!cliConfigForInternalHandling.api.secret || cliConfigForInternalHandling.api.secret !== options.secret) {
-      console.error(JSON.stringify({ success: false, error: "PBManagerInternal: Invalid API secret." }));
-      await new Promise((resolve) => setTimeout(resolve, Math.random() * 1000 + 500));
-      process.exit(1);
-    }
-
-    let payload = {};
-    if (options.payload) {
-      try {
-        payload = JSON.parse(Buffer.from(options.payload, "base64").toString("utf-8"));
-      } catch (e) {
-        console.error(JSON.stringify({ success: false, error: "PBManagerInternal: Invalid JSON payload.", details: e.message }));
-        process.exit(1);
-      }
-    }
-    program.runningCommand = { name: () => "_internal-api-request" };
-    try {
-      let result;
-      switch (options.action) {
-        case "listInstances":
-          result = await _internalListInstances();
-          console.log(JSON.stringify({ success: true, data: result }));
-          break;
-        case "addInstance":
-          result = await _internalAddInstance(payload);
-          console.log(JSON.stringify(result));
-          break;
-        case "removeInstance":
-          result = await _internalRemoveInstance(payload);
-          console.log(JSON.stringify(result));
-          break;
-        case "getGlobalStats":
-          result = await _internalGetGlobalStats();
-          console.log(JSON.stringify(result));
-          break;
-        case "getInstanceLogs":
-          result = await _internalGetInstanceLogs(payload);
-          console.log(JSON.stringify(result));
-          break;
-        case "cloneInstance":
-          result = await _internalCloneInstance(payload);
-          console.log(JSON.stringify(result));
-          break;
-        case "resetInstance":
-          result = await _internalResetInstance(payload);
-          console.log(JSON.stringify(result));
-          break;
-        case "resetAdminPassword":
-          result = await _internalResetAdminPassword(payload);
-          console.log(JSON.stringify(result));
-          break;
-        case "renewCertificates":
-          result = await _internalRenewCertificates(payload);
-          console.log(JSON.stringify(result));
-          break;
-        case "updatePocketBaseExecutable":
-          result = await _internalUpdatePocketBaseExecutable();
-          console.log(JSON.stringify(result));
-          break;
-        case "updateEcosystemAndReloadPm2":
-          result = await _internalUpdateEcosystemAndReloadPm2();
-          console.log(JSON.stringify(result));
-          break;
-        case "setDefaultCertbotEmail":
-          result = await _internalSetDefaultCertbotEmail(payload);
-          console.log(JSON.stringify(result));
-          break;
-        default:
-          console.error(JSON.stringify({ success: false, error: `PBManagerInternal: Unknown internal action: ${options.action}` }));
-          process.exit(1);
-      }
-    } catch (error) {
-      console.error(JSON.stringify({ success: false, error: `PBManagerInternal: Error executing internal action ${options.action}: ${error.message}`, stack: completeLogging ? error.stack : undefined }));
-      process.exit(1);
-    }
-  });
-
 program.hook("preAction", async (thisCommand, actionCommand) => {
   currentCommandNameForAudit = actionCommand.name();
   currentCommandArgsForAudit = process.argv.slice(3).join(" ");
-  if (actionCommand.name() === "_internal-api-request") {
-    return;
-  }
   try {
     await fs.ensureDir(CONFIG_DIR);
     const cliConfig = await getCliConfig();
@@ -2456,7 +2312,7 @@ program.helpInformation = () => `
 
   Setup & Configuration:
     setup [--version]                  Initial setup: creates directories and downloads PocketBase
-    configure                          Set or view CLI configurations (default Certbot email, PB version, logging, API)
+    configure                          Set or view CLI configurations (default Certbot email, PB version, logging)
 
   Updates & Maintenance:
     renew-certificates <name | all>   Renew SSL certificates using Certbot (use --force to force renewal)
@@ -2472,7 +2328,7 @@ program.helpInformation = () => `
 `;
 
 async function main() {
-  if (process.argv[2] !== "_internal-api-request" && process.geteuid && process.geteuid() !== 0) {
+  if (process.geteuid && process.geteuid() !== 0) {
     console.error(chalk.red("You must run this script as root or with sudo. This is required for managing system services and configurations."));
     process.exit(1);
   }
@@ -2481,7 +2337,7 @@ async function main() {
   const cliConfig = await getCliConfig();
   completeLogging = cliConfig.completeLogging || false;
 
-  if (process.argv[2] !== "_internal-api-request" && process.argv[2] !== "setup" && process.argv[2] !== "configure" && process.argv[2] !== "update-pb-manager") {
+  if (process.argv[2] !== "setup" && process.argv[2] !== "configure" && process.argv[2] !== "update-pb-manager") {
     if (!shell.which("pm2")) {
       console.error(chalk.red("PM2 is not installed or not in PATH. PM2 is essential for managing PocketBase instances."));
       console.log(chalk.blue("Please install PM2 globally by running: npm install -g pm2"));
@@ -2504,12 +2360,10 @@ async function main() {
 }
 
 main().catch(async (err) => {
-  if (process.argv[2] !== "_internal-api-request") {
-    console.error(chalk.red("An unexpected error occurred:"), err.message);
-  }
+  console.error(chalk.red("An unexpected error occurred:"), err.message);
   await appendAuditLog(currentCommandNameForAudit, currentCommandArgsForAudit, err);
   const cliConfig = await getCliConfig().catch(() => ({ completeLogging: false }));
-  if (err.stack && (cliConfig.completeLogging || process.env.DEBUG) && process.argv[2] !== "_internal-api-request") {
+  if (err.stack && (cliConfig.completeLogging || process.env.DEBUG)) {
     console.error(err.stack);
   }
   process.exit(1);
